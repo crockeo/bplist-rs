@@ -20,7 +20,7 @@ pub enum Value {
     Data(Vec<u8>),
     Str(String),
     UID(Vec<u8>),
-    Array(Vec<Vec<u8>>),
+    Array(Vec<u64>),
     // Set
     Dict(HashMap<u64, u64>),
 }
@@ -196,7 +196,7 @@ fn parse_array(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(Va
     for _ in 0..length {
         let mut objref = vec![0; trailer.object_ref_size as usize];
         file.read_exact(objref.as_mut_slice())?;
-        values.push(objref);
+        values.push(util::from_be_bytes(objref));
     }
     Ok((
         Value::Array(values),

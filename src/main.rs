@@ -79,25 +79,51 @@ fn main() -> result::Result<()> {
     let object_table = object_table::ObjectTable::load(&mut file, &trailer)?;
     let reference_table = reference_table::ReferenceTable::load(&mut file, &trailer)?;
 
-    println!("{:?}\n", object_table);
-    println!("{:?}\n", reference_table);
-
-    let map = &object_table[&8];
-    if let object_table::Value::Dict(map) = map {
-        for (keyref, objref) in map.into_iter() {
-            let keyref_ref = reference_table.get(keyref).unwrap();
-            let objref_ref = reference_table.get(objref).unwrap();
-            println!(
-                "{} -> {} -> {:?}\n{} -> {} -> {:?}\n--------",
-                keyref,
-                keyref_ref,
-                object_table.get(keyref_ref),
-                objref,
-                objref_ref,
-                object_table.get(objref_ref)
-            );
-        }
-    }
+    recursively_print(&object_table, &reference_table, 8, 0)?;
 
     Ok(())
+}
+
+fn recursively_print(
+    object_table: &object_table::ObjectTable,
+    reference_table: &reference_table::ReferenceTable,
+    offset: u64,
+    depth: u64,
+) -> result::Result<()> {
+    match &object_table[&offset] {
+        object_table::Value::Array(values) => {
+            println!("[");
+            for objref in values.into_iter() {
+                print_depth(depth + 1);
+                recursively_print(object_table, reference_table, reference_table[&objref], depth + 1)?;
+                println!();
+            }
+            print_depth(depth);
+            print!("]");
+            Ok(())
+        },
+        object_table::Value::Dict(map) => {
+            println!("{{");
+            for (keyref, objref) in map.into_iter() {
+                print_depth(depth + 1);
+                recursively_print(object_table, reference_table, reference_table[keyref], depth + 1)?;
+                print!(" -> ");
+                recursively_print(object_table, reference_table, reference_table[objref], depth + 1)?;
+                println!();
+            }
+            print_depth(depth);
+            println!("}}");
+            Ok(())
+        },
+        x => {
+            print!("{:?}", x);
+            Ok(())
+        },
+    }
+}
+
+fn print_depth(depth: u64) {
+    for _ in 0..2 * depth {
+        print!(" ");
+    }
 }
