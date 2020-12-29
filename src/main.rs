@@ -3,8 +3,10 @@ use std::io::{Read, Seek, SeekFrom};
 use std::str;
 
 mod object_table;
+mod reference_table;
 mod result;
 mod trailer;
+mod util;
 
 /*
  * taken from https://opensource.apple.com/source/CF/CF-550/CFBinaryPList.c for reference while
@@ -74,7 +76,15 @@ fn main() -> result::Result<()> {
     let current_pos = file.seek(SeekFrom::Current(0))?;
     let trailer = trailer::Trailer::load(&mut file, current_pos)?;
 
-    let bplist = object_table::ObjectTable::load(&mut file, &trailer)?;
+    let object_table = object_table::ObjectTable::load(&mut file, &trailer)?;
+    let reference_table = reference_table::ReferenceTable::load(&mut file, &trailer)?;
+
+    let map = &object_table[&0];
+    if let object_table::Value::Dict(map) = map {
+        for (keyref, objref) in map.into_iter() {
+            println!("{} {}", keyref, objref);
+        }
+    }
 
     Ok(())
 }

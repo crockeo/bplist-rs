@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
+use std::ops::Index;
 use std::str;
 
 use crate::result::{Error, Result};
 use crate::trailer::Trailer;
+use crate::util;
 
 #[derive(Debug)]
 pub enum Value {
@@ -19,9 +21,10 @@ pub enum Value {
     UID(Vec<u8>),
     Array(Vec<Vec<u8>>),
     // Set
-    Dict(HashMap<Vec<u8>, Vec<u8>>),
+    Dict(HashMap<u64, u64>),
 }
 
+#[derive(Debug)]
 pub struct ObjectTable(HashMap<u64, Value>);
 
 impl ObjectTable {
@@ -38,6 +41,14 @@ impl ObjectTable {
         }
 
         Ok(object_table)
+    }
+}
+
+impl Index<&'_ u64> for ObjectTable {
+    type Output = Value;
+
+    fn index(&self, idx: &'_ u64) -> &Self::Output {
+        &self.0[&idx]
     }
 }
 
@@ -181,7 +192,7 @@ fn parse_dict(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(Val
         file.read_exact(keyref.as_mut_slice())?;
         file.read_exact(objref.as_mut_slice())?;
 
-        references.insert(keyref, objref);
+        references.insert(util::from_be_bytes(keyref), util::from_be_bytes(objref));
     }
 
     Ok((
