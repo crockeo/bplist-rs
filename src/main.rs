@@ -79,10 +79,23 @@ fn main() -> result::Result<()> {
     let object_table = object_table::ObjectTable::load(&mut file, &trailer)?;
     let reference_table = reference_table::ReferenceTable::load(&mut file, &trailer)?;
 
-    let map = &object_table[&0];
+    println!("{:?}\n", object_table);
+    println!("{:?}\n", reference_table);
+
+    let map = &object_table[&8];
     if let object_table::Value::Dict(map) = map {
         for (keyref, objref) in map.into_iter() {
-            println!("{} {}", keyref, objref);
+            let keyref_ref = reference_table.get(keyref).unwrap();
+            let objref_ref = reference_table.get(objref).unwrap();
+            println!(
+                "{} -> {} -> {:?}\n{} -> {} -> {:?}\n--------",
+                keyref,
+                keyref_ref,
+                object_table.get(keyref_ref),
+                objref,
+                objref_ref,
+                object_table.get(objref_ref)
+            );
         }
     }
 

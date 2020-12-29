@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::io::Read;
 use std::ops::Index;
@@ -24,7 +25,6 @@ pub enum Value {
     Dict(HashMap<u64, u64>),
 }
 
-#[derive(Debug)]
 pub struct ObjectTable(HashMap<u64, Value>);
 
 impl ObjectTable {
@@ -33,7 +33,7 @@ impl ObjectTable {
         // verified the header and loaded the trailer.
 
         let mut object_table = ObjectTable(HashMap::new());
-        let mut byte_offset = 0u64;
+        let mut byte_offset = 8u64;
         for _ in 0..trailer.num_objects {
             let (item, byte_width) = parse_item(file, trailer)?;
             object_table.0.insert(byte_offset, item);
@@ -41,6 +41,26 @@ impl ObjectTable {
         }
 
         Ok(object_table)
+    }
+
+    pub fn get<'a>(&'a self, key: &u64) -> Option<&'a Value> {
+        self.0.get(key)
+    }
+}
+
+impl Debug for ObjectTable {
+    fn fmt(&self, f: &mut Formatter) -> std::result::Result<(), std::fmt::Error> {
+        let mut values = Vec::with_capacity(self.0.len());
+        for (key, value) in self.0.iter() {
+            values.push((key, value));
+        }
+        values.sort_by(|(key1, _), (key2, _)| key1.cmp(key2));
+
+        write!(f, "{{\n")?;
+        for (key, value) in values.into_iter() {
+            write!(f, "    {}: {:?}\n", key, value)?;
+        }
+        write!(f, "}}\n")
     }
 }
 
@@ -62,7 +82,7 @@ fn parse_item(file: &mut File, trailer: &Trailer) -> Result<(Value, u64)> {
     let marker_high = (marker[0] & 0b11110000) >> 4;
     let marker_low = marker[0] & 0b00001111;
 
-    match marker_high {
+    let (item, byte_width) = match marker_high {
         marker::SINGLE => parse_single(marker_low),
         marker::INT => parse_int(file, marker_low),
         marker::REAL => parse_real(file, marker_low),
@@ -75,8 +95,10 @@ fn parse_item(file: &mut File, trailer: &Trailer) -> Result<(Value, u64)> {
         marker::SET => todo!("set"),
         marker::DICT => parse_dict(file, trailer, marker_low),
 
-        _ => return Err(Error::InvalidFormat("unrecognized part")),
-    }
+        _ => Err(Error::InvalidFormat("unrecognized part")),
+    }?;
+
+    Ok((item, byte_width + 1))
 }
 
 fn parse_single(marker_low: u8) -> Result<(Value, u64)> {
@@ -108,7 +130,7 @@ fn parse_int(file: &mut File, marker_low: u8) -> Result<(Value, u64)> {
         n = (n << 8) | (byte as i64);
     }
 
-    Ok((Value::Int(n), byte_count as u64 + 1))
+    Ok((Value::Int(n), byte_count as u64))
 }
 
 fn parse_real(file: &mut File, marker_low: u8) -> Result<(Value, u64)> {
@@ -131,7 +153,7 @@ fn parse_real(file: &mut File, marker_low: u8) -> Result<(Value, u64)> {
 
     Ok((
         Value::Real(f64::from_be_bytes(float_buf)),
-        byte_count as u64 + 1,
+        byte_count as u64,
     ))
 }
 
@@ -139,7 +161,7 @@ fn parse_data(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(Val
     let (length, byte_width) = read_length(file, trailer, marker_low)?;
     let mut buf = vec![0; length as usize];
     file.read_exact(buf.as_mut_slice())?;
-    Ok((Value::Data(buf), length as u64 + byte_width + 1))
+    Ok((Value::Data(buf), length as u64 + byte_width))
 }
 
 fn parse_ascii_str(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(Value, u64)> {
@@ -148,7 +170,7 @@ fn parse_ascii_str(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result
     file.read_exact(buf.as_mut_slice())?;
     Ok((
         Value::Str(as_utf8(&buf)?.to_owned()),
-        length as u64 + byte_width + 1,
+        length as u64 + byte_width,
     ))
 }
 
@@ -158,14 +180,14 @@ fn parse_utf16_str(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result
     file.read_exact(buf.as_mut_slice())?;
     Ok((
         Value::Str(as_utf16(&buf)?),
-        length as u64 * byte_width * 2 + 1,
+        length as u64 * 2 + byte_width,
     ))
 }
 
 fn parse_uid(file: &mut File, marker_low: u8) -> Result<(Value, u64)> {
     let mut buf = vec![0; (marker_low + 1) as usize];
     file.read_exact(buf.as_mut_slice())?;
-    Ok((Value::UID(buf), marker_low as u64 + 2))
+    Ok((Value::UID(buf), marker_low as u64 + 1))
 }
 
 fn parse_array(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(Value, u64)> {
@@ -178,7 +200,7 @@ fn parse_array(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(Va
     }
     Ok((
         Value::Array(values),
-        length as u64 * trailer.object_ref_size as u64 * byte_width + 1,
+        length as u64 * trailer.object_ref_size as u64 + byte_width,
     ))
 }
 
@@ -197,7 +219,7 @@ fn parse_dict(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(Val
 
     Ok((
         Value::Dict(references),
-        length as u64 * trailer.object_ref_size as u64 * byte_width * 2 + 1,
+        length as u64 * trailer.object_ref_size as u64 * 2 + byte_width,
     ))
 }
 
@@ -225,12 +247,12 @@ fn read_length(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(i6
     if marker_low == 0b1111 {
         let (item, byte_width) = parse_item(file, trailer)?;
         if let Value::Int(n) = item {
-            Ok((n, byte_width + 1))
+            Ok((n, byte_width))
         } else {
             Err(Error::InvalidFormat("invalid dict size"))
         }
     } else {
-        Ok((marker_low as i64, 1))
+        Ok((marker_low as i64, 0))
     }
 }
 
