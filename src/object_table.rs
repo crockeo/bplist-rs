@@ -22,25 +22,26 @@ pub enum Value {
     Dict(HashMap<Vec<u8>, Vec<u8>>),
 }
 
-pub struct ObjectTable(Vec<Value>);
+pub struct ObjectTable(HashMap<u64, Value>);
 
 impl ObjectTable {
     pub fn load(file: &mut File, trailer: &Trailer) -> Result<ObjectTable> {
         // NOTE: assumes we're already at the beginning of the object table, i.e. we've already
         // verified the header and loaded the trailer.
 
-        let mut object_table = ObjectTable(Vec::new());
+        let mut object_table = ObjectTable(HashMap::new());
+        let mut byte_offset = 0u64;
         for _ in 0..trailer.num_objects {
-            let item = parse_item(file, trailer)?;
-            println!("{:?}", item);
-            object_table.0.push(item);
+            let (item, byte_width) = parse_item(file, trailer)?;
+            object_table.0.insert(byte_offset, item);
+            byte_offset += byte_width;
         }
 
         Ok(object_table)
     }
 }
 
-fn parse_item(file: &mut File, trailer: &Trailer) -> Result<Value> {
+fn parse_item(file: &mut File, trailer: &Trailer) -> Result<(Value, u64)> {
     let mut marker = [0u8];
     let bytes_read = file.read(&mut marker)?;
     if bytes_read == 0 {
@@ -67,19 +68,22 @@ fn parse_item(file: &mut File, trailer: &Trailer) -> Result<Value> {
     }
 }
 
-fn parse_single(marker_low: u8) -> Result<Value> {
-    Ok(match marker_low {
-        0b0000 => Value::Null,
-        0b1000 => Value::Bool(false),
-        0b0001 => Value::Bool(true),
-        0b1111 => Value::Filler,
-        _ => {
-            return Err(Error::InvalidFormat("invalid single byte"));
-        }
-    })
+fn parse_single(marker_low: u8) -> Result<(Value, u64)> {
+    Ok((
+        match marker_low {
+            0b0000 => Value::Null,
+            0b1000 => Value::Bool(false),
+            0b0001 => Value::Bool(true),
+            0b1111 => Value::Filler,
+            _ => {
+                return Err(Error::InvalidFormat("invalid single byte"));
+            }
+        },
+        0,
+    ))
 }
 
-fn parse_int(file: &mut File, marker_low: u8) -> Result<Value> {
+fn parse_int(file: &mut File, marker_low: u8) -> Result<(Value, u64)> {
     let mut byte_count = 1usize;
     for _ in 0..marker_low {
         byte_count *= 2;
@@ -93,10 +97,10 @@ fn parse_int(file: &mut File, marker_low: u8) -> Result<Value> {
         n = (n << 8) | (byte as i64);
     }
 
-    Ok(Value::Int(n))
+    Ok((Value::Int(n), byte_count as u64 + 1))
 }
 
-fn parse_real(file: &mut File, marker_low: u8) -> Result<Value> {
+fn parse_real(file: &mut File, marker_low: u8) -> Result<(Value, u64)> {
     let mut byte_count = 1usize;
     for _ in 0..marker_low {
         byte_count *= 2;
@@ -114,61 +118,61 @@ fn parse_real(file: &mut File, marker_low: u8) -> Result<Value> {
         float_buf[7 - i] = byte;
     }
 
-    Ok(Value::Real(f64::from_be_bytes(float_buf)))
+    Ok((
+        Value::Real(f64::from_be_bytes(float_buf)),
+        byte_count as u64 + 1,
+    ))
 }
 
-fn parse_data(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<Value> {
-    let length = read_length(file, trailer, marker_low)? as usize;
-    let mut buf = vec![0; length];
+fn parse_data(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(Value, u64)> {
+    let (length, byte_width) = read_length(file, trailer, marker_low)?;
+    let mut buf = vec![0; length as usize];
     file.read_exact(buf.as_mut_slice())?;
-    Ok(Value::Data(buf))
+    Ok((Value::Data(buf), length as u64 + byte_width + 1))
 }
 
-fn parse_ascii_str(
-    file: &mut File,
-    trailer: &Trailer,
-    marker_low: u8,
-) -> Result<Value> {
-    let length = read_length(file, trailer, marker_low)? as usize;
-    let mut buf = vec![0; length];
+fn parse_ascii_str(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(Value, u64)> {
+    let (length, byte_width) = read_length(file, trailer, marker_low)?;
+    let mut buf = vec![0; length as usize];
     file.read_exact(buf.as_mut_slice())?;
-    Ok(Value::Str(as_utf8(&buf)?.to_owned()))
+    Ok((
+        Value::Str(as_utf8(&buf)?.to_owned()),
+        length as u64 + byte_width + 1,
+    ))
 }
 
-fn parse_utf16_str(
-    file: &mut File,
-    trailer: &Trailer,
-    marker_low: u8,
-) -> Result<Value> {
-    let length = read_length(file, trailer, marker_low)? as usize * 2;
-    let mut buf = vec![0; length];
+fn parse_utf16_str(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(Value, u64)> {
+    let (length, byte_width) = read_length(file, trailer, marker_low)?;
+    let mut buf = vec![0; length as usize * 2];
     file.read_exact(buf.as_mut_slice())?;
-    Ok(Value::Str(as_utf16(&buf)?))
+    Ok((
+        Value::Str(as_utf16(&buf)?),
+        length as u64 * byte_width * 2 + 1,
+    ))
 }
 
-fn parse_uid(file: &mut File, marker_low: u8) -> Result<Value> {
+fn parse_uid(file: &mut File, marker_low: u8) -> Result<(Value, u64)> {
     let mut buf = vec![0; (marker_low + 1) as usize];
     file.read_exact(buf.as_mut_slice())?;
-    Ok(Value::UID(buf))
+    Ok((Value::UID(buf), marker_low as u64 + 2))
 }
 
-fn parse_array(
-    file: &mut File,
-    trailer: &Trailer,
-    marker_low: u8,
-) -> Result<Value> {
-    let length = read_length(file, trailer, marker_low)? as usize;
-    let mut values = Vec::with_capacity(length);
+fn parse_array(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(Value, u64)> {
+    let (length, byte_width) = read_length(file, trailer, marker_low)?;
+    let mut values = Vec::with_capacity(length as usize);
     for _ in 0..length {
         let mut objref = vec![0; trailer.object_ref_size as usize];
         file.read_exact(objref.as_mut_slice())?;
         values.push(objref);
     }
-    Ok(Value::Array(values))
+    Ok((
+        Value::Array(values),
+        length as u64 * trailer.object_ref_size as u64 * byte_width + 1,
+    ))
 }
 
-fn parse_dict(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<Value> {
-    let length = read_length(file, trailer, marker_low)?;
+fn parse_dict(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(Value, u64)> {
+    let (length, byte_width) = read_length(file, trailer, marker_low)?;
     let mut references = HashMap::new();
     for _ in 0..length {
         let mut keyref = vec![0; trailer.object_ref_size as usize];
@@ -180,7 +184,10 @@ fn parse_dict(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<Valu
         references.insert(keyref, objref);
     }
 
-    Ok(Value::Dict(references))
+    Ok((
+        Value::Dict(references),
+        length as u64 * trailer.object_ref_size as u64 * byte_width * 2 + 1,
+    ))
 }
 
 fn as_utf8(buf: &[u8]) -> Result<&str> {
@@ -200,19 +207,19 @@ fn as_utf16(buf: &[u8]) -> Result<String> {
         combined_buf[i] = ((buf[2 * i] as u16) << 8) | (buf[2 * i + 1] as u16);
     }
 
-    String::from_utf16(&combined_buf)
-        .map_err(|_| Error::InvalidFormat("invalid utf16 format"))
+    String::from_utf16(&combined_buf).map_err(|_| Error::InvalidFormat("invalid utf16 format"))
 }
 
-fn read_length(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<i64> {
+fn read_length(file: &mut File, trailer: &Trailer, marker_low: u8) -> Result<(i64, u64)> {
     if marker_low == 0b1111 {
-        if let Value::Int(n) = parse_item(file, trailer)? {
-            Ok(n)
+        let (item, byte_width) = parse_item(file, trailer)?;
+        if let Value::Int(n) = item {
+            Ok((n, byte_width + 1))
         } else {
             Err(Error::InvalidFormat("invalid dict size"))
         }
     } else {
-        Ok(marker_low as i64)
+        Ok((marker_low as i64, 1))
     }
 }
 
