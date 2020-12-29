@@ -1,8 +1,6 @@
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
-use std::str;
 
-mod object_table;
+mod bplist;
 mod reference_table;
 mod result;
 mod trailer;
@@ -61,69 +59,7 @@ TRAILER
 
 fn main() -> result::Result<()> {
     let mut file = File::open("test.ichat")?;
-
-    // ensuring this is the right format
-    let mut magic_buf = [0; 8];
-    file.read_exact(&mut magic_buf)?;
-    let magic_buf_str = match str::from_utf8(&magic_buf) {
-        Err(_) => return Err(result::Error::EncodingError),
-        Ok(x) => x,
-    };
-    if magic_buf_str != "bplist00" {
-        return Err(result::Error::InvalidFormat("invalid magic string"));
-    }
-
-    let current_pos = file.seek(SeekFrom::Current(0))?;
-    let trailer = trailer::Trailer::load(&mut file, current_pos)?;
-
-    let object_table = object_table::ObjectTable::load(&mut file, &trailer)?;
-    let reference_table = reference_table::ReferenceTable::load(&mut file, &trailer)?;
-
-    recursively_print(&object_table, &reference_table, 8, 0)?;
-
+    let bplist = bplist::BPList::load(&mut file)?;
+    println!("{:?}", bplist);
     Ok(())
-}
-
-fn recursively_print(
-    object_table: &object_table::ObjectTable,
-    reference_table: &reference_table::ReferenceTable,
-    offset: u64,
-    depth: u64,
-) -> result::Result<()> {
-    match &object_table[&offset] {
-        object_table::Value::Array(values) => {
-            println!("[");
-            for objref in values.into_iter() {
-                print_depth(depth + 1);
-                recursively_print(object_table, reference_table, reference_table[&objref], depth + 1)?;
-                println!();
-            }
-            print_depth(depth);
-            print!("]");
-            Ok(())
-        },
-        object_table::Value::Dict(map) => {
-            println!("{{");
-            for (keyref, objref) in map.into_iter() {
-                print_depth(depth + 1);
-                recursively_print(object_table, reference_table, reference_table[keyref], depth + 1)?;
-                print!(" -> ");
-                recursively_print(object_table, reference_table, reference_table[objref], depth + 1)?;
-                println!();
-            }
-            print_depth(depth);
-            println!("}}");
-            Ok(())
-        },
-        x => {
-            print!("{:?}", x);
-            Ok(())
-        },
-    }
-}
-
-fn print_depth(depth: u64) {
-    for _ in 0..2 * depth {
-        print!(" ");
-    }
 }

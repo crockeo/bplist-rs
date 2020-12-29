@@ -6,6 +6,7 @@ pub enum Error {
     IOError(io::Error),
     EncodingError,
     InvalidFormat(&'static str),
+    NotFound,
 }
 
 impl From<io::Error> for Error {

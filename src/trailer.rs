@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 
 use crate::result::Result;
 
@@ -12,9 +12,7 @@ pub struct Trailer {
 }
 
 impl Trailer {
-    pub fn load(file: &mut File, current_pos: u64) -> Result<Trailer> {
-        file.seek(SeekFrom::End(-32))?;
-
+    pub fn load(file: &mut File) -> Result<Trailer> {
         let mut buf = [0; 8];
         file.read_exact(&mut buf[0..6])?;
 
@@ -32,8 +30,6 @@ impl Trailer {
 
         file.read_exact(&mut buf)?;
         let offset_table_start = u64::from_be_bytes(buf);
-
-        file.seek(SeekFrom::Start(current_pos))?;
 
         Ok(Trailer {
             offset_table_offset_size,

@@ -17,14 +17,14 @@ impl ReferenceTable {
         for i in 0..trailer.num_objects {
             let mut buf = vec![0; trailer.offset_table_offset_size as usize];
             file.read_exact(buf.as_mut_slice())?;
-            reference_table.0.insert(i, util::from_be_bytes(buf));
+            reference_table.0.insert(i, util::from_be_bytes(&buf));
         }
 
         Ok(reference_table)
     }
 
-    pub fn get<'a>(&'a self, key: &u64) -> Option<&'a u64> {
-        self.0.get(key)
+    pub fn get<'a>(&self, key: &u64) -> Option<u64> {
+        self.0.get(key).map(|idx| *idx)
     }
 }
 
