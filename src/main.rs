@@ -60,6 +60,8 @@ TRAILER
 fn main() -> result::Result<()> {
     let mut file = File::open("test.ichat")?;
     let bplist = bplist::BPList::load(&mut file)?;
+
     println!("{:?}", bplist);
+
     Ok(())
 }

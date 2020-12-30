@@ -1,3 +1,5 @@
+use std::fmt;
+use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::str;
@@ -7,7 +9,6 @@ use crate::result::{Error, Result};
 use crate::trailer::Trailer;
 use crate::util;
 
-#[derive(Debug)]
 pub enum BPList {
     Null,
     Bool(bool),
@@ -21,6 +22,12 @@ pub enum BPList {
     Array(Vec<Box<BPList>>),
     // Set
     Dict(Vec<(Box<BPList>, Box<BPList>)>),
+}
+
+impl Debug for BPList {
+    fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
+        self.print(fmt, 0)
+    }
 }
 
 impl BPList {
@@ -86,6 +93,62 @@ impl BPList {
             },
         }
     }
+
+    pub fn print(&self, fmt: &mut Formatter, depth: u64) -> fmt::Result {
+        match self {
+            BPList::Null => write!(fmt, "null"),
+            BPList::Bool(b) => write!(fmt, "{}", b),
+            BPList::Filler => write!(fmt, "filler"),
+            BPList::Int(i) => write!(fmt, "{}", i),
+            BPList::Real(i) => write!(fmt, "{}", i),
+            BPList::Data(bytes) => {
+                write!(fmt, "[ ")?;
+                for byte in bytes.into_iter() {
+                    write!(fmt, "{} ", byte)?;
+                }
+                write!(fmt, "]")
+            },
+            BPList::Str(s) => write!(fmt, "{:?}", s),
+            BPList::UID(bytes) => {
+                write!(fmt, "[ ")?;
+                for byte in bytes.into_iter() {
+                    write!(fmt, "{} ", byte)?;
+                }
+                write!(fmt, "]")
+            },
+            BPList::Array(array) => {
+                writeln!(fmt, "[ ")?;
+
+                for item in array.into_iter() {
+                    print_depth(fmt, depth + 1)?;
+                    item.print(fmt, depth + 1)?;
+                    writeln!(fmt, ",")?;
+                }
+                print_depth(fmt, depth)?;
+                write!(fmt, "]")
+            },
+            BPList::Dict(array) => {
+                writeln!(fmt, "{{")?;
+
+                for (key, object) in array.into_iter() {
+                    print_depth(fmt, depth + 1)?;
+                    key.print(fmt, depth + 1)?;
+                    write!(fmt, " -> ")?;
+                    object.print(fmt, depth + 1)?;
+                    writeln!(fmt, ",")?;
+                }
+                print_depth(fmt, depth)?;
+                write!(fmt, "}}")
+            },
+        }
+    }
+}
+
+fn print_depth(fmt: &mut Formatter, depth: u64) -> fmt::Result {
+    for _ in 0..depth {
+        write!(fmt, "  ")?;
+    }
+    Ok(())
 }
 
 fn load_single(marker_low: u8) -> Result<BPList> {
