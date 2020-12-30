@@ -1,13 +1,61 @@
+mod reference_table;
+mod result;
+mod trailer;
+mod util;
+
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::str;
 
-use crate::reference_table::ReferenceTable;
-use crate::result::{Error, Result};
-use crate::trailer::Trailer;
-use crate::util;
+use reference_table::ReferenceTable;
+pub use result::{Error, Result};
+use trailer::Trailer;
+
+/* taken from https://opensource.apple.com/source/CF/CF-550/CFBinaryPList.c for reference while
+
+HEADER
+    magic number ("bplist")
+    file format version
+
+OBJECT TABLE
+    variable-sized objects
+
+    Object Formats (marker byte followed by additional info in some cases)
+    null	0000 0000
+    bool	0000 1000			// false
+    bool	0000 1001			// true
+    fill	0000 1111			// fill byte
+    int	0001 nnnn	...		// # of bytes is 2^nnnn, big-endian bytes
+    real	0010 nnnn	...		// # of bytes is 2^nnnn, big-endian bytes
+    date	0011 0011	...		// 8 byte float follows, big-endian bytes
+    data	0100 nnnn	[int]	...	// nnnn is number of bytes unless 1111 then int count follows, followed by bytes
+    string	0101 nnnn	[int]	...	// ASCII string, nnnn is # of chars, else 1111 then int count, then bytes
+    string	0110 nnnn	[int]	...	// Unicode string, nnnn is # of chars, else 1111 then int count, then big-endian 2-byte uint16_t
+        0111 xxxx			// unused
+    uid	1000 nnnn	...		// nnnn+1 is # of bytes
+        1001 xxxx			// unused
+    array	1010 nnnn	[int]	objref*	// nnnn is count, unless '1111', then int count follows
+        1011 xxxx			// unused
+    set	1100 nnnn	[int]	objref* // nnnn is count, unless '1111', then int count follows
+    dict	1101 nnnn	[int]	keyref* objref*	// nnnn is count, unless '1111', then int count follows
+        1110 xxxx			// unused
+        1111 xxxx			// unused
+
+OFFSET TABLE
+    list of ints, byte size of which is given in trailer
+    -- these are the byte offsets into the file
+    -- number of these is in the trailer
+
+TRAILER
+    byte size of offset ints in offset table
+    byte size of object refs in arrays and dicts
+    number of offsets in offset table (also is number of objects)
+    element # in offset table which is top level object
+    offset table offset
+
+*/
 
 pub enum BPList {
     Null,
@@ -30,6 +78,25 @@ impl Debug for BPList {
     }
 }
 
+impl PartialEq for BPList {
+    fn eq(&self, other: &Self) -> bool {
+        use BPList::*;
+
+        match (self, other) {
+            (Null, Null) => true,
+            (Bool(b1), Bool(b2)) => b1 == b2,
+            (Filler, Filler) => true,
+            (Int(i1), Int(i2)) => i1 == i2,
+            (Data(d1), Data(d2)) => d1 == d2,
+            (Str(s1), Str(s2)) => s1 == s2,
+            (UID(u1), UID(u2)) => u1 == u2,
+
+            // assume no equality for: Real, Array, Dict.
+            _ => false,
+        }
+    }
+}
+
 impl BPList {
     pub fn load(file: &mut File) -> Result<BPList> {
         // ensuring this is the right format
@@ -44,7 +111,7 @@ impl BPList {
         }
 
         // get the necessary information to load the object table
-        let object_table_pos = file. seek(SeekFrom::Current(0))?;
+        let object_table_pos = file.seek(SeekFrom::Current(0))?;
 
         file.seek(SeekFrom::End(-32))?;
         let trailer = Trailer::load(file)?;
@@ -79,7 +146,7 @@ impl BPList {
             marker::DATE => todo!("date"),
             marker::DATA => load_data(file, trailer, reference_table, marker_low),
             marker::ASCII_STR => load_ascii_str(file, trailer, reference_table, marker_low),
-            marker::UTF16_STR => load_utf16_str(file, trailer, reference_table,marker_low),
+            marker::UTF16_STR => load_utf16_str(file, trailer, reference_table, marker_low),
             marker::UID => load_uid(file, marker_low),
 
             // complex types
@@ -90,7 +157,7 @@ impl BPList {
             x => {
                 println!("{}", x);
                 Err(Error::InvalidFormat("unrecognized part"))
-            },
+            }
         }
     }
 
@@ -107,7 +174,7 @@ impl BPList {
                     write!(fmt, "{} ", byte)?;
                 }
                 write!(fmt, "]")
-            },
+            }
             BPList::Str(s) => write!(fmt, "{:?}", s),
             BPList::UID(bytes) => {
                 write!(fmt, "[ ")?;
@@ -115,7 +182,7 @@ impl BPList {
                     write!(fmt, "{} ", byte)?;
                 }
                 write!(fmt, "]")
-            },
+            }
             BPList::Array(array) => {
                 writeln!(fmt, "[ ")?;
 
@@ -126,7 +193,7 @@ impl BPList {
                 }
                 print_depth(fmt, depth)?;
                 write!(fmt, "]")
-            },
+            }
             BPList::Dict(array) => {
                 writeln!(fmt, "{{")?;
 
@@ -139,8 +206,35 @@ impl BPList {
                 }
                 print_depth(fmt, depth)?;
                 write!(fmt, "}}")
-            },
+            }
         }
+    }
+
+    pub fn get<'a>(&'a self, lookup_key: BPList) -> Result<&'a BPList> {
+        use BPList::*;
+
+        match (self, &lookup_key) {
+            // (Array(items), Int(idx)) => items.get(idx).ok_or(Error::NotFound),
+
+            (Dict(items), lookup_key) => {
+                for (key, value) in items.into_iter() {
+                    if key.as_ref() == lookup_key {
+                        return Ok(value);
+                    }
+                }
+                Err(Error::NotFound)
+            }
+
+            _ => Err(Error::NotFound),
+        }
+    }
+
+    pub fn gets<'a>(&'a self, lookup_key: &str) -> Result<&'a BPList> {
+        self.get(BPList::Str(lookup_key.to_owned()))
+    }
+
+    pub fn geti<'a>(&'a self, lookup_key: usize) -> Result<&'a BPList> {
+        self.get(BPList::Int(lookup_key as i64))
     }
 }
 
@@ -226,13 +320,16 @@ fn load_ascii_str(
     Ok(BPList::Str(util::as_utf8(&buf)?.to_owned()))
 }
 
-fn load_utf16_str(file: &mut File, trailer: &Trailer, reference_table: &ReferenceTable, marker_low: u8) -> Result<BPList> {
+fn load_utf16_str(
+    file: &mut File,
+    trailer: &Trailer,
+    reference_table: &ReferenceTable,
+    marker_low: u8,
+) -> Result<BPList> {
     let length = load_length(file, trailer, reference_table, marker_low)?;
     let mut buf = vec![0; length as usize * 2];
     file.read_exact(buf.as_mut_slice())?;
-    Ok(
-        BPList::Str(util::as_utf16(&buf)?)
-    )
+    Ok(BPList::Str(util::as_utf16(&buf)?))
 }
 
 fn load_uid(file: &mut File, marker_low: u8) -> Result<BPList> {

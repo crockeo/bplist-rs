@@ -1,6 +1,6 @@
 use std::str;
 
-use crate::result::{Error, Result};
+use super::result::{Error, Result};
 
 pub fn from_be_bytes(bytes: &Vec<u8>) -> u64 {
     if bytes.len() > 8 {

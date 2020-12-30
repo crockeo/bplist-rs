@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 
-use crate::result::Result;
+use super::result::Result;
 
 pub struct Trailer {
     pub offset_table_offset_size: u8,

@@ -4,9 +4,9 @@ use std::fs::File;
 use std::io::Read;
 use std::ops::Index;
 
-use crate::result::Result;
-use crate::trailer::Trailer;
-use crate::util;
+use super::result::Result;
+use super::trailer::Trailer;
+use super::util;
 
 pub struct ReferenceTable(HashMap<u64, u64>);
 
