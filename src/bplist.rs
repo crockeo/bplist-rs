@@ -274,19 +274,22 @@ fn load_dict(
     let length = load_length(file, trailer, reference_table, marker_low)?;
 
     let mut ref_buf = vec![0; trailer.object_ref_size as usize];
-    let mut refs = Vec::new();
+    let mut keyrefs = Vec::new();
+    let mut objrefs = Vec::new();
     for _ in 0..length {
         file.read_exact(ref_buf.as_mut_slice())?;
         let keyref = util::from_be_bytes(&ref_buf);
+        keyrefs.push(keyref);
+    }
 
+    for _ in 0..length {
         file.read_exact(ref_buf.as_mut_slice())?;
         let objref = util::from_be_bytes(&ref_buf);
-
-        refs.push((keyref, objref));
+        objrefs.push(objref);
     }
 
     let mut objs = Vec::new();
-    for (keyref, objref) in refs.into_iter() {
+    for (keyref, objref) in keyrefs.into_iter().zip(objrefs.into_iter()) {
         seek_ref(file, reference_table, keyref)?;
         let key = BPList::load_item(file, trailer, reference_table)?;
 
