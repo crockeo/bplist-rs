@@ -249,7 +249,7 @@ fn load_single(marker_low: u8) -> Result<BPList> {
     Ok(match marker_low {
         0b0000 => BPList::Null,
         0b1000 => BPList::Bool(false),
-        0b0001 => BPList::Bool(true),
+        0b1001 => BPList::Bool(true),
         0b1111 => BPList::Filler,
         _ => {
             return Err(Error::InvalidFormat("invalid single byte"));
